@@ -3,6 +3,7 @@
 
 # import the necessary packages
 from imutils.object_detection import non_max_suppression
+from locality_aware_nms import nms_locality
 import numpy as np
 import argparse
 import time
@@ -34,9 +35,14 @@ def get_nearest_multiple(val, max_val, factor):
     return int(val)
 
 def adjust_cropargs(image, crop_params, factor):
+    """
+    adjust the crop parameters such that the cropped image's height and width is a factor of 'factor'
+    :param image:
+    :param crop_params: [x,y, width, height]
+    :param factor: the height and with need to be a factor of this number
+    :return: updated crop parameters
+    """
     crop_x, crop_y, crop_w, crop_h = crop_params
-    fac_w = crop_w * 1.0 / 32
-    fac_h = crop_h * 1.0 / 32
 
     H, W = image.shape[:2]
 
@@ -91,16 +97,31 @@ def decode_predictions(scores, geometry):
             # the text prediction bounding box
             endX = int(offsetX + (cos * xData1[x]) + (sin * xData2[x]))
             endY = int(offsetY - (sin * xData1[x]) + (cos * xData2[x]))
-            startX = int(endX - w)
-            startY = int(endY - h)
+            #startX = int(endX - w)
+            #startY = int(endY - h)
+
+            #co-ordinates of the rotated rectangle
+            poly = [
+                (int(endX - (h * sin + w * cos)), int(endY + w * sin - h * cos)),
+                (int(endX - h * sin), int(endY - h * cos)),
+                (int(endX), int(endY)),
+                (int(endX - w * cos), int(endY + w * sin))
+            ]
 
             # add the bounding box coordinates and probability score to
             # our respective lists
-            rects.append((startX, startY, endX, endY))
+            rects.append(poly)
             confidences.append(scoresData[x])
 
     return (rects, confidences)
 
+def drawRotatedBoundBox(boxes, image):
+    for box in boxes:
+        for idx in range(4):
+            if idx == 3:
+                cv2.line(image, (box[idx][0], box[idx][1]), (box[0][0], box[0][1]), (0, 0, 255), 2)
+            else:
+                cv2.line(image, (box[idx][0], box[idx][1]), (box[idx + 1][0], box[idx + 1][1]), (0, 0, 255), 2)
 
 def get_text_boxes(image, W, H):
     # define the two output layer names for the EAST detector model that
@@ -125,18 +146,15 @@ def get_text_boxes(image, W, H):
     (rects, confidences) = decode_predictions(scores, geometry)
     # apply non-maxima suppression to suppress weak, overlapping bounding
     # boxes
-    boxes = non_max_suppression(np.array(rects), probs=confidences)
+    #boxes = non_max_suppression(np.array(rects), probs=confidences)
+    boxes, conf = nms_locality(np.array(rects, dtype=np.float32), confidences)
 
     end = time.time()
+
     # show timing information on text prediction
     print("[INFO] text detection took {:.6f} seconds".format(end - start))
 
     return boxes
-
-    # startX = int(startX * rW)
-    # startY = int(startY * rH)
-    # endX = int(endX * rW)
-    # endY = int(endY * rH)
 
 def main():
     args = init_args()
@@ -162,9 +180,7 @@ def main():
     (height, width) = image.shape[:2]
     boxes = get_text_boxes(image, width, height)
 
-    for (startX, startY, endX, endY) in boxes:
-        #area = (endX - startX) * (endY - startY)
-        cv2.rectangle(image, (startX, startY), (endX, endY), (0, 255, 0), 2)
+    drawRotatedBoundBox(boxes, image)
     cv2.imwrite('output.png', image)
     cv2.imshow("Text Detection", image)
     cv2.waitKey(0)

@@ -3,8 +3,10 @@ from shapely.geometry import Polygon
 
 
 def intersection(g, p):
-    g = Polygon(g[:8].reshape((4, 2)))
-    p = Polygon(p[:8].reshape((4, 2)))
+    g = Polygon(g)
+    p = Polygon(p)
+    #g = Polygon(g[:8].reshape((4, 2)))
+    #p = Polygon(p[:8].reshape((4, 2)))
     if not g.is_valid or not p.is_valid:
         return 0
     inter = Polygon(g).intersection(Polygon(p)).area
@@ -15,14 +17,15 @@ def intersection(g, p):
         return inter/union
 
 
-def weighted_merge(g, p):
-    g[:8] = (g[8] * g[:8] + p[8] * p[:8])/(g[8] + p[8])
-    g[8] = (g[8] + p[8])
-    return g
+def weighted_merge(g, vg, p, vp):
+    g[:8] = (vg * g[:8] + vp * p[:8])/(vg + vp)
+    vp = (vg + vp)/2
+    return g, vp
 
 
-def standard_nms(S, thres):
-    order = np.argsort(S[:, 8])[::-1]
+def standard_nms(S, conf, thres):
+    #order = np.argsort(S[:, 8])[::-1]
+    order = np.argsort(conf)[::-1]
     keep = []
     while order.size > 0:
         i = order[0]
@@ -32,30 +35,38 @@ def standard_nms(S, thres):
         inds = np.where(ovr <= thres)[0]
         order = order[inds+1]
 
-    return S[keep]
+    return S[keep], np.array(conf)[keep]
 
 
-def nms_locality(polys, thres=0.3):
+def nms_locality(polys, conf, thres=0.3):
     '''
     locality aware nms of EAST
     :param polys: a N*9 numpy array. first 8 coordinates, then prob
     :return: boxes after nms
     '''
     S = []
+    vS = []
     p = None
-    for g in polys:
+    vp = None
+    
+    #print("poly shape = {}".format(polys.shape))
+    for idx, g in enumerate(polys):
         if p is not None and intersection(g, p) > thres:
-            p = weighted_merge(g, p)
+            vg = conf[idx]
+            p, vp = weighted_merge(g, vg, p, vp)
         else:
             if p is not None:
                 S.append(p)
+                vS.append(vp)
             p = g
+            vp = conf[idx]
     if p is not None:
         S.append(p)
+        vS.append(vp)
 
     if len(S) == 0:
         return np.array([])
-    return standard_nms(np.array(S), thres)
+    return standard_nms(np.array(S), vS, thres)
 
 
 if __name__ == '__main__':
